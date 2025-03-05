@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 
 void main() {
   runApp(const MyApp());
@@ -29,6 +32,9 @@ class MyApp extends StatelessWidget {
         // This works for code too, not just values: Most code changes can be
         // tested with just a hot reload.
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+        cardTheme: CardTheme(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
+        ),
       ),
       home: const MyHomePage(title: 'Graid Anasayfa'),
     );
@@ -53,9 +59,88 @@ class MyHomePage extends StatefulWidget {
   State<MyHomePage> createState() => _MyHomePageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
+class _MyHomePageState extends State<MyHomePage>
+    with SingleTickerProviderStateMixin {
   int _counter = 0;
   int _pageIndex = 0;
+  bool isRealData = false;
+  bool? serverStatus;
+  bool loading = true;
+  Map<String, String>? sensorData;
+  late AnimationController _blinkController;
+
+  @override
+  void initState() {
+    super.initState();
+    _blinkController = AnimationController(
+      duration: const Duration(milliseconds: 1000),
+      vsync: this,
+      lowerBound: 0.5,
+      upperBound: 1.0,
+    )..repeat(reverse: true);
+    fetchSensorData();
+  }
+
+  Future<void> fetchSensorData() async {
+    try {
+      final response = await http
+          .get(Uri.parse('http://your-esp-endpoint/sensor'))
+          .timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        setState(() {
+          sensorData = Map<String, String>.from(json.decode(response.body));
+          isRealData = true;
+        });
+        sendDataToServer();
+      } else {
+        throw Exception('HTTP Error: ${response.statusCode}');
+      }
+    } catch (error) {
+      setState(() {
+        sensorData = {
+          'soilMoisture': '35%',
+          'humidity': '41%',
+          'temperature': '22°C',
+          'ec': '1.2 mS/cm',
+          'ph': '6.8',
+          'nitrogen': '20 mg/kg',
+          'phosphorous': '15 mg/kg',
+          'potassium': '25 mg/kg',
+        };
+        isRealData = false;
+      });
+    } finally {
+      setState(() {
+        loading = false;
+      });
+    }
+  }
+
+  Future<void> sendDataToServer() async {
+    try {
+      final response = await http.get(
+        Uri.parse('http://127.0.0.1:8000/myapp/start'),
+      );
+      if (response.statusCode == 200) {
+        setState(() {
+          serverStatus = true;
+        });
+      } else {
+        throw Exception('HTTP Error: ${response.statusCode}');
+      }
+    } catch (error) {
+      setState(() {
+        serverStatus = false;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _blinkController.dispose();
+    super.dispose();
+  }
 
   void _incrementCounter() {
     setState(() {
@@ -88,26 +173,88 @@ class _MyHomePageState extends State<MyHomePage> {
       ),
       body:
           <Widget>[
-            Center(
+            // Home page (Sensor page)
+            Padding(
+              padding: const EdgeInsets.all(16.0),
               child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: <Widget>[const Text('Home Page')],
-              ),
-            ),
-
-            Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: <Widget>[
-                  const Text('You have pushed the button this many times:'),
-                  Text(
-                    '$_counter',
-                    style: Theme.of(context).textTheme.headlineMedium,
+                children: [
+                  AnimatedOpacity(
+                    opacity: _blinkController.value,
+                    duration: const Duration(milliseconds: 500),
+                    child: Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: isRealData ? Colors.green : Colors.red,
+                        borderRadius: BorderRadius.circular(5),
+                      ),
+                      child: Text(
+                        isRealData
+                            ? "ESP'den Gerçek Veri Geldi!"
+                            : "ESP'den Veri Gelmedi",
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  AnimatedOpacity(
+                    opacity: _blinkController.value,
+                    duration: const Duration(milliseconds: 500),
+                    child: Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: serverStatus == true ? Colors.green : Colors.red,
+                        borderRadius: BorderRadius.circular(5),
+                      ),
+                      child: Text(
+                        serverStatus == true
+                            ? "Sunucuya İstek Gönderildi!"
+                            : "Sunucuya İstek Gönderilemedi!",
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Expanded(
+                    child:
+                        loading
+                            ? const Center(child: CircularProgressIndicator())
+                            : ListView.builder(
+                              itemCount: sensorData?.keys.length ?? 0,
+                              itemBuilder: (context, index) {
+                                String key = sensorData!.keys.elementAt(index);
+                                return Card(
+                                  child: ListTile(
+                                    title: Text(
+                                      key,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    subtitle: Text(sensorData![key]!),
+                                  ),
+                                );
+                              },
+                            ),
                   ),
                 ],
               ),
             ),
 
+            // Settings page
+            Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: <Widget>[const Text('Settings Page')],
+              ),
+            ),
+
+            // Profile page
             Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -123,7 +270,7 @@ class _MyHomePageState extends State<MyHomePage> {
         },
         selectedIndex: _pageIndex,
         indicatorColor: Colors.deepPurple,
-        destinations: [
+        destinations: const [
           NavigationDestination(
             icon: Icon(Icons.home),
             label: "Anasayfa",
@@ -141,11 +288,6 @@ class _MyHomePageState extends State<MyHomePage> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
     );
   }
 }
